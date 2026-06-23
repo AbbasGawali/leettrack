@@ -348,9 +348,9 @@ export default function Dashboard({ user }: DashboardProps) {
           <button className="ghost-button" onClick={randomUnsolved}>
             Random unsolved
           </button>
-          <button className="danger-button" onClick={resetProgress}>
+          {/* <button className="danger-button" onClick={resetProgress}>
             Reset
-          </button>
+          </button> */}
           <button className="ghost-button" onClick={logout}>
             Logout
           </button>
