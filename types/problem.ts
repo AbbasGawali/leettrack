@@ -17,6 +17,9 @@ export type ProblemProgress = {
   problemId: number;
   status: ProgressStatus;
   note?: string;
+  customTitle?: string;
+  customUrl?: string;
+  customSource?: string;
   intervalDays?: number;
   nextReviewAt?: string;
   lastReviewedAt?: string;

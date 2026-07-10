@@ -123,6 +123,9 @@ export async function getUserProgress(userId: string): Promise<ProblemProgress[]
     problemId: row.problemId,
     status: row.status,
     note: row.note,
+    customTitle: row.customTitle,
+    customUrl: row.customUrl,
+    customSource: row.customSource,
     intervalDays: row.intervalDays,
     nextReviewAt:
       row.nextReviewAt instanceof Date ? row.nextReviewAt.toISOString() : row.nextReviewAt,
@@ -161,6 +164,9 @@ export async function upsertUserProgress(
     problemId: progress.problemId,
     status: progress.status,
     note: progress.note || "",
+    customTitle: progress.customTitle,
+    customUrl: progress.customUrl,
+    customSource: progress.customSource,
     ...revisionSchedule,
     updatedAt: updatedAt.toISOString()
   };
@@ -190,6 +196,9 @@ export async function upsertUserProgress(
         problemId: progress.problemId,
         status: progress.status,
         note: progress.note || "",
+        customTitle: progress.customTitle,
+        customUrl: progress.customUrl,
+        customSource: progress.customSource,
         ...revisionSchedule,
         updatedAt
       },
@@ -210,6 +219,27 @@ export async function upsertUserProgress(
   );
 
   return nextProgress;
+}
+
+export async function createCustomRevisionItem(
+  userId: string,
+  input: {
+    title: string;
+    url: string;
+    source?: string;
+    note?: string;
+  }
+): Promise<ProblemProgress> {
+  const problemId = -Math.floor(Date.now() + Math.random() * 1000);
+
+  return upsertUserProgress(userId, {
+    problemId,
+    status: "revision",
+    note: input.note || "",
+    customTitle: input.title,
+    customUrl: input.url,
+    customSource: input.source || "Custom"
+  });
 }
 
 export async function reviewUserProgress(

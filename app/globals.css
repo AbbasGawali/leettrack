@@ -456,6 +456,10 @@ select:focus {
   color: var(--amber);
 }
 
+.review-actions .note-button {
+  color: var(--blue);
+}
+
 .review-pill {
   display: inline-flex;
   min-width: 84px;
@@ -485,6 +489,18 @@ select:focus {
   align-items: end;
 }
 
+.custom-question-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.custom-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 12px;
+}
+
 .table-card {
   border-radius: 14px;
   overflow: hidden;
@@ -494,8 +510,33 @@ select:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 18px 20px;
   border-bottom: 1px solid var(--border);
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.pagination button {
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--input);
+  color: var(--text);
+  padding: 0 12px;
+  font-weight: 850;
+}
+
+.pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .table-scroll {
@@ -600,6 +641,50 @@ tbody tr.is-revision {
   font-weight: 800;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.48);
+  backdrop-filter: blur(10px);
+}
+
+.note-modal {
+  width: min(560px, 100%);
+  max-height: min(70vh, 640px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-solid);
+  color: var(--text);
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+
+.note-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.note-modal-header h2 {
+  margin-bottom: 0;
+  font-size: 1.25rem;
+}
+
+.note-modal-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  line-height: 1.6;
+}
+
 @media (max-width: 1180px) {
   .filter-grid {
     grid-template-columns: repeat(3, 1fr);
@@ -631,8 +716,15 @@ tbody tr.is-revision {
 
   .stats-grid,
   .filter-grid,
-  .revision-columns {
+  .revision-columns,
+  .custom-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .table-header,
+  .note-modal-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .dashboard-shell {

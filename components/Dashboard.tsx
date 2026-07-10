@@ -1,14 +1,14 @@
 "use client";
 
+import { MAX_SUCCESSFUL_REVIEWS } from "@/lib/revision";
 import type {
   Problem,
   ProblemProgress,
   ProgressStatus,
   SessionUser
 } from "@/types/problem";
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { MAX_SUCCESSFUL_REVIEWS } from "@/lib/revision";
 
 type DashboardProps = {
   user: SessionUser;
@@ -21,7 +21,17 @@ type RevisionItem = {
   problem: Problem;
   progress: ProblemProgress;
   dueState: "due" | "tomorrow" | "upcoming";
+  href: string;
 };
+
+type SearchableProblem = Problem & {
+  ratingValue: number;
+  titleSearch: string;
+  contestSearch: string;
+  idSearch: string;
+};
+
+const PAGE_SIZE = 100;
 
 const sortLabels: Record<SortKey, string> = {
   idDesc: "Newest",
@@ -76,6 +86,29 @@ function getDueState(value?: string): RevisionItem["dueState"] {
   return "upcoming";
 }
 
+function getProblemHref(problem: Problem, progress?: ProblemProgress) {
+  if (progress?.customUrl) {
+    return progress.customUrl;
+  }
+
+  return `https://leetcode.com/problems/${problem.TitleSlug}`;
+}
+
+function customProblemFromProgress(progress: ProblemProgress): Problem | null {
+  if (!progress.customTitle || !progress.customUrl) {
+    return null;
+  }
+
+  return {
+    ID: progress.problemId,
+    Title: progress.customTitle,
+    TitleSlug: "",
+    Rating: 0,
+    ProblemIndex: "Custom",
+    ContestTitle: progress.customSource || "Custom"
+  };
+}
+
 export default function Dashboard({ user }: DashboardProps) {
   const router = useRouter();
   const [problems, setProblems] = useState<Problem[]>([]);
@@ -89,7 +122,19 @@ export default function Dashboard({ user }: DashboardProps) {
   const [sort, setSort] = useState<SortKey>("idDesc");
   const [minRating, setMinRating] = useState("");
   const [maxRating, setMaxRating] = useState("");
+  const [page, setPage] = useState(1);
   const [theme, setTheme] = useState("light");
+  const [customError, setCustomError] = useState("");
+  const [customLoading, setCustomLoading] = useState(false);
+  const [openNote, setOpenNote] = useState<{
+    title: string;
+    note: string;
+  } | null>(null);
+
+  const deferredSearch = useDeferredValue(search);
+  const deferredContest = useDeferredValue(contest);
+  const deferredMinRating = useDeferredValue(minRating);
+  const deferredMaxRating = useDeferredValue(maxRating);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem("leettrack-theme") || "light";
@@ -125,6 +170,28 @@ export default function Dashboard({ user }: DashboardProps) {
     load();
   }, []);
 
+  useEffect(() => {
+    setPage(1);
+  }, [
+    deferredContest,
+    deferredMaxRating,
+    deferredMinRating,
+    deferredSearch,
+    question,
+    sort,
+    status
+  ]);
+
+  const searchableProblems = useMemo<SearchableProblem[]>(() => {
+    return problems.map((problem) => ({
+      ...problem,
+      ratingValue: Number(problem.Rating) || 0,
+      titleSearch: problem.Title.toLowerCase(),
+      contestSearch: (problem.ContestTitle || problem.ContestID_en || "").toLowerCase(),
+      idSearch: String(problem.ID)
+    }));
+  }, [problems]);
+
   const problemById = useMemo(
     () => new Map(problems.map((problem) => [problem.ID, problem])),
     [problems]
@@ -134,7 +201,7 @@ export default function Dashboard({ user }: DashboardProps) {
     return Object.values(progress)
       .filter((item) => item.status === "revision")
       .map((item) => {
-        const problem = problemById.get(item.problemId);
+        const problem = problemById.get(item.problemId) || customProblemFromProgress(item);
         if (!problem) {
           return null;
         }
@@ -142,7 +209,8 @@ export default function Dashboard({ user }: DashboardProps) {
         return {
           problem,
           progress: item,
-          dueState: getDueState(item.nextReviewAt)
+          dueState: getDueState(item.nextReviewAt),
+          href: getProblemHref(problem, item)
         };
       })
       .filter((item): item is RevisionItem => Boolean(item))
@@ -173,70 +241,83 @@ export default function Dashboard({ user }: DashboardProps) {
   }, [dueItems.length, problems, progress, revisionItems.length, tomorrowItems.length]);
 
   const filteredProblems = useMemo(() => {
-    const min = Number(minRating) || 0;
-    const max = Number(maxRating) || Number.MAX_SAFE_INTEGER;
-    const query = search.trim().toLowerCase();
-    const contestQuery = contest.trim().toLowerCase();
+    const min = Number(deferredMinRating) || 0;
+    const max = Number(deferredMaxRating) || Number.MAX_SAFE_INTEGER;
+    const query = deferredSearch.trim().toLowerCase();
+    const contestQuery = deferredContest.trim().toLowerCase();
 
-    return [...problems]
-      .filter((problem) => {
-        const rowProgress = progress[problem.ID];
-        const title = problem.Title.toLowerCase();
-        const contestTitle = (problem.ContestTitle || problem.ContestID_en || "").toLowerCase();
-        const rating = Number(problem.Rating);
-        const isDue = getDueState(rowProgress?.nextReviewAt) === "due";
+    const filtered = searchableProblems.filter((problem) => {
+      const rowProgress = progress[problem.ID];
 
-        if (query && !title.includes(query) && !String(problem.ID).includes(query)) {
-          return false;
-        }
+      if (problem.ratingValue < min || problem.ratingValue > max) {
+        return false;
+      }
 
-        if (contestQuery && !contestTitle.includes(contestQuery)) {
-          return false;
-        }
+      if (query && !problem.titleSearch.includes(query) && !problem.idSearch.includes(query)) {
+        return false;
+      }
 
-        if (question !== "all" && problem.ProblemIndex !== question) {
-          return false;
-        }
+      if (contestQuery && !problem.contestSearch.includes(contestQuery)) {
+        return false;
+      }
 
-        if (rating < min || rating > max) {
-          return false;
-        }
+      if (question !== "all" && problem.ProblemIndex !== question) {
+        return false;
+      }
 
-        if (status === "unsolved" && rowProgress) {
-          return false;
-        }
+      if (status === "unsolved" && rowProgress) {
+        return false;
+      }
 
-        if (status === "due" && (!rowProgress || rowProgress.status !== "revision" || !isDue)) {
-          return false;
-        }
+      if (status === "due") {
+        return rowProgress?.status === "revision" && getDueState(rowProgress.nextReviewAt) === "due";
+      }
 
-        if (
-          (status === "solved" || status === "revision") &&
-          rowProgress?.status !== status
-        ) {
-          return false;
-        }
+      if (
+        (status === "solved" || status === "revision") &&
+        rowProgress?.status !== status
+      ) {
+        return false;
+      }
 
-        return true;
-      })
-      .sort((a, b) => {
-        switch (sort) {
-          case "ratingAsc":
-            return a.Rating - b.Rating;
-          case "ratingDesc":
-            return b.Rating - a.Rating;
-          case "idAsc":
-            return a.ID - b.ID;
-          case "qAsc":
-            return a.ProblemIndex.localeCompare(b.ProblemIndex);
-          case "qDesc":
-            return b.ProblemIndex.localeCompare(a.ProblemIndex);
-          case "idDesc":
-          default:
-            return b.ID - a.ID;
-        }
-      });
-  }, [contest, maxRating, minRating, problems, progress, question, search, sort, status]);
+      return true;
+    });
+
+    return filtered.sort((a, b) => {
+      switch (sort) {
+        case "ratingAsc":
+          return a.ratingValue - b.ratingValue;
+        case "ratingDesc":
+          return b.ratingValue - a.ratingValue;
+        case "idAsc":
+          return a.ID - b.ID;
+        case "qAsc":
+          return a.ProblemIndex.localeCompare(b.ProblemIndex);
+        case "qDesc":
+          return b.ProblemIndex.localeCompare(a.ProblemIndex);
+        case "idDesc":
+        default:
+          return b.ID - a.ID;
+      }
+    });
+  }, [
+    deferredContest,
+    deferredMaxRating,
+    deferredMinRating,
+    deferredSearch,
+    progress,
+    question,
+    searchableProblems,
+    sort,
+    status
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredProblems.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const visibleProblems = filteredProblems.slice(
+    (safePage - 1) * PAGE_SIZE,
+    safePage * PAGE_SIZE
+  );
 
   function setThemeMode(nextTheme: string) {
     setTheme(nextTheme);
@@ -299,17 +380,33 @@ export default function Dashboard({ user }: DashboardProps) {
     setProgress((current) => ({ ...current, [problemId]: data.progress }));
   }
 
-  async function resetProgress() {
-    if (!window.confirm("Reset all of your saved progress?")) {
+  async function addCustomQuestion(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setCustomError("");
+    setCustomLoading(true);
+
+    const formData = new FormData(event.currentTarget);
+    const response = await fetch("/api/progress/custom", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: String(formData.get("title") || ""),
+        url: String(formData.get("url") || ""),
+        source: String(formData.get("source") || "Custom"),
+        note: String(formData.get("note") || "")
+      })
+    });
+
+    const data = await response.json();
+    setCustomLoading(false);
+
+    if (!response.ok) {
+      setCustomError(data.error || "Could not add custom question.");
       return;
     }
 
-    const previous = progress;
-    setProgress({});
-    const response = await fetch("/api/progress", { method: "DELETE" });
-    if (!response.ok) {
-      setProgress(previous);
-    }
+    setProgress((current) => ({ ...current, [data.progress.problemId]: data.progress }));
+    event.currentTarget.reset();
   }
 
   async function logout() {
@@ -348,9 +445,6 @@ export default function Dashboard({ user }: DashboardProps) {
           <button className="ghost-button" onClick={randomUnsolved}>
             Random unsolved
           </button>
-          {/* <button className="danger-button" onClick={resetProgress}>
-            Reset
-          </button> */}
           <button className="ghost-button" onClick={logout}>
             Logout
           </button>
@@ -374,16 +468,57 @@ export default function Dashboard({ user }: DashboardProps) {
           <p className="eyebrow">Anki-style revision</p>
           <h2>{dueItems.length ? "Your revision queue is ready" : "No urgent revision right now"}</h2>
           <p className="muted">
-            Add a problem to Revision and it appears tomorrow. Each successful
-            review schedules it after 2, 4, 8, 16 days and keeps doubling.
-            After {MAX_SUCCESSFUL_REVIEWS} Got it reviews, it graduates out of Anki.
+            Add any LeetCode or external problem to Revision. It appears
+            tomorrow, then successful reviews move through 2, 4, 8, 16 day
+            intervals. After {MAX_SUCCESSFUL_REVIEWS} Got it reviews, it
+            graduates out of Anki.
           </p>
+
+          <form className="custom-question-form" onSubmit={addCustomQuestion}>
+            <label>
+              Custom question
+              <input name="title" placeholder="GFG: Maximum path sum" required />
+            </label>
+            <label>
+              Link
+              <input name="url" type="url" placeholder="https://..." required />
+            </label>
+            <div className="custom-form-grid">
+              <label>
+                Source
+                <input name="source" placeholder="GFG" />
+              </label>
+              <label>
+                Note
+                <input name="note" placeholder="What went wrong?" />
+              </label>
+            </div>
+            {customError && <p className="error">{customError}</p>}
+            <button className="primary-button" disabled={customLoading}>
+              {customLoading ? "Adding..." : "Add to revision"}
+            </button>
+          </form>
         </div>
 
         <div className="revision-columns">
-          <RevisionColumn title="Due today" items={dueItems} onReview={reviewProblem} />
-          <RevisionColumn title="Tomorrow" items={tomorrowItems} onReview={reviewProblem} />
-          <RevisionColumn title="Upcoming" items={upcomingItems.slice(0, 4)} onReview={reviewProblem} />
+          <RevisionColumn
+            title="Due today"
+            items={dueItems}
+            onReview={reviewProblem}
+            onShowNote={setOpenNote}
+          />
+          <RevisionColumn
+            title="Tomorrow"
+            items={tomorrowItems}
+            onReview={reviewProblem}
+            onShowNote={setOpenNote}
+          />
+          <RevisionColumn
+            title="Upcoming"
+            items={upcomingItems.slice(0, 4)}
+            onReview={reviewProblem}
+            onShowNote={setOpenNote}
+          />
         </div>
       </section>
 
@@ -442,8 +577,25 @@ export default function Dashboard({ user }: DashboardProps) {
         <div className="table-header">
           <div>
             <h2>Problems</h2>
-            <p className="muted">{filteredProblems.length.toLocaleString()} results</p>
+            <p className="muted">
+              Showing {visibleProblems.length.toLocaleString()} of{" "}
+              {filteredProblems.length.toLocaleString()} results
+            </p>
           </div>
+
+          {filteredProblems.length > PAGE_SIZE && (
+            <div className="pagination">
+              <button disabled={safePage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>
+                Prev
+              </button>
+              <span>
+                Page {safePage} / {totalPages}
+              </span>
+              <button disabled={safePage === totalPages} onClick={() => setPage((value) => Math.min(totalPages, value + 1))}>
+                Next
+              </button>
+            </div>
+          )}
         </div>
 
         {loading && <div className="empty-state">Loading live problem data...</div>}
@@ -470,7 +622,7 @@ export default function Dashboard({ user }: DashboardProps) {
                 </tr>
               </thead>
               <tbody>
-                {filteredProblems.map((problem) => {
+                {visibleProblems.map((problem) => {
                   const rowProgress = progress[problem.ID];
                   const dueState = getDueState(rowProgress?.nextReviewAt);
 
@@ -535,7 +687,7 @@ export default function Dashboard({ user }: DashboardProps) {
                       <td>
                         <a
                           className="problem-link"
-                          href={`https://leetcode.com/problems/${problem.TitleSlug}`}
+                          href={getProblemHref(problem, rowProgress)}
                           target="_blank"
                           rel="noreferrer"
                         >
@@ -550,6 +702,33 @@ export default function Dashboard({ user }: DashboardProps) {
           </div>
         )}
       </section>
+
+      {openNote && (
+        <div
+          className="modal-backdrop"
+          role="presentation"
+          onClick={() => setOpenNote(null)}
+        >
+          <section
+            className="note-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="note-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="note-modal-header">
+              <div>
+                <p className="eyebrow">Revision note</p>
+                <h2 id="note-modal-title">{openNote.title}</h2>
+              </div>
+              <button className="ghost-button" onClick={() => setOpenNote(null)}>
+                Close
+              </button>
+            </div>
+            <p className="note-modal-body">{openNote.note}</p>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
@@ -557,11 +736,13 @@ export default function Dashboard({ user }: DashboardProps) {
 function RevisionColumn({
   title,
   items,
-  onReview
+  onReview,
+  onShowNote
 }: {
   title: string;
   items: RevisionItem[];
   onReview: (problemId: number, result: "solved" | "again") => void;
+  onShowNote: (note: { title: string; note: string }) => void;
 }) {
   return (
     <article className="revision-column">
@@ -573,24 +754,33 @@ function RevisionColumn({
       {items.length === 0 ? (
         <p className="muted small">Nothing here yet.</p>
       ) : (
-        items.map(({ problem, progress, dueState }) => (
+        items.map(({ problem, progress, dueState, href }) => (
           <div className={`revision-card ${dueState}`} key={problem.ID}>
             <div>
               <strong>{problem.Title}</strong>
               <p>
-                {formatDate(progress.nextReviewAt)} · interval{" "}
-                {progress.intervalDays || 1}d · Got it{" "}
+                {problem.ContestTitle || "Custom"} | {formatDate(progress.nextReviewAt)} | interval{" "}
+                {progress.intervalDays || 1}d | Got it{" "}
                 {progress.successfulReviewCount || 0}/{MAX_SUCCESSFUL_REVIEWS}
               </p>
             </div>
             <div className="review-actions">
-              <a
-                href={`https://leetcode.com/problems/${problem.TitleSlug}`}
-                target="_blank"
-                rel="noreferrer"
-              >
+              <a href={href} target="_blank" rel="noreferrer">
                 Open
               </a>
+              {progress.note?.trim() && (
+                <button
+                  className="note-button"
+                  onClick={() =>
+                    onShowNote({
+                      title: problem.Title,
+                      note: progress.note?.trim() || ""
+                    })
+                  }
+                >
+                  Note
+                </button>
+              )}
               <button onClick={() => onReview(problem.ID, "solved")}>Got it</button>
               <button onClick={() => onReview(problem.ID, "again")}>Again</button>
             </div>
